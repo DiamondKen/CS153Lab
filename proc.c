@@ -261,7 +261,9 @@ exit(int status)
     }
   }
 
+  // Assign the exitStatus of current Process to the status given by user
   curproc->exitStatus = status;
+  // cprintf("status input: %d, status code: %d, current Process: %d\n", status, curproc->exitStatus, curproc->pid);
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
@@ -271,7 +273,7 @@ exit(int status)
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
-wait(void)
+wait(int *status)
 {
   struct proc *p;
   int havekids, pid;
@@ -287,6 +289,65 @@ wait(void)
       havekids = 1;
       if(p->state == ZOMBIE){
         // Found one.
+
+        if (status)
+        {
+          // cprintf("status code: %d", p->exitStatus);
+          *status = p->exitStatus;
+        }
+          
+
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        p->exitStatus = 0;
+        release(&ptable.lock);
+        return pid;
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+// Wait for a specific process to exit and return its pid.
+// Return -1 if this process does not exist or if an unexpected error occurred.
+int waitpid(int pid, int *status, int options)
+{
+  struct proc *p;
+  int processFound = 0;
+  struct proc *curproc = myproc();
+
+  acquire(&ptable.lock);
+  for (;;)
+  {
+    // Scan through table looking for exited children.
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
+      // If pid is not the pid we looking for, continue
+      if (p->pid != pid)
+        continue;
+
+      // Found the matched Process
+      processFound = 1;
+      if (p->state == ZOMBIE)
+      {
+        if(status)
+         *status = p->exitStatus;
+        
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
@@ -301,14 +362,14 @@ wait(void)
       }
     }
 
-    // No point waiting if we don't have any children.
-    if(!havekids || curproc->killed){
+    if (!processFound || curproc->killed)
+    {
       release(&ptable.lock);
       return -1;
     }
 
-    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
-    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+    // Wait for specific process to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock); //DOC: wait-sleep
   }
 }
 
